@@ -51,14 +51,16 @@
       import { getDatabase, ref, set, onValue, update, runTransaction } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
 
       // ⚠️ CONFIGURAZIONE FIREBASE
-      const firebaseConfig = {
-        apiKey: "IL_TUO_API_KEY",
-        authDomain: "IL_TUO_PROGETTO.firebaseapp.com",
-        databaseURL: "https://IL_TUO_PROGETTO-default-rtdb.firebaseio.com",
-        projectId: "IL_TUO_PROGETTO",
-        storageBucket: "IL_TUO_PROGETTO.appspot.com",
-        appId: "IL_TUO_APP_ID"
-      };
+const firebaseConfig = {
+  apiKey: "AIzaSyCxhfYhaC0z7_748TYvgch20nKLNgaRLvA",
+  authDomain: "post-itis-a11da.firebaseapp.com",
+  databaseURL: "https://post-itis-a11da-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "post-itis-a11da",
+  storageBucket: "post-itis-a11da.firebasestorage.app",
+  messagingSenderId: "991915195904",
+  appId: "1:991915195904:web:d8bed6a7eda915496962e5",
+  measurementId: "G-BHL1VBXYFT"
+};
 
       const app = initializeApp(firebaseConfig);
       const db = getDatabase(app);
