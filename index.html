@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <title>Live Image Canvas - Semaphores</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #222; color: white; text-align: center; }
+        #canvas { 
+            display: grid; 
+            grid-template-columns: repeat(20, 40px); /* 20x20 per visibilità */
+            gap: 2px; 
+            justify-content: center;
+            margin-top: 20px;
+        }
+        .pixel { 
+            width: 40px; height: 40px; background: #444; 
+            border-radius: 4px; cursor: pointer; position: relative;
+            background-size: cover; background-position: center;
+        }
+        /* Stato: Occupato (Semaforo Rosso) */
+        .pixel.locked { cursor: not-allowed; border: 2px solid #ff4444; opacity: 0.5; }
+        .pixel.locked::after { content: "🔒"; font-size: 10px; position: absolute; top: 0; right: 0; }
+        
+        .controls { margin: 20px; padding: 20px; background: #333; display: inline-block; border-radius: 10px; }
+        input, button { padding: 10px; border-radius: 5px; border: none; margin: 5px; }
+        button { background: #0088ff; color: white; cursor: pointer; font-weight: bold; }
+        button:hover { background: #0055aa; }
+        #status { font-weight: bold; color: #00ff00; }
+    </style>
+</head>
+<body>
+
+    <h1>Collaborative Image Canvas</h1>
+    <p>Clicca un pixel o usa il pulsante per averne uno a caso!</p>
+
+    <div class="controls">
+        <button id="btnRandom">Assegnami un pixel a caso</button>
+        <div id="editZone" style="display:none;">
+            <p id="currentPixelText"></p>
+            <input type="text" id="imgUrl" placeholder="Incolla URL immagine qui...">
+            <button id="btnSave">Salva Immagine</button>
+            <button id="btnCancel" style="background:#666;">Annulla</button>
+        </div>
+        <p id="infoStatus"></p>
+    </div>
+
+    <div id="canvas"></div>
+
+    <script type="module">
+      import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+      import { getDatabase, ref, set, onValue, update, runTransaction } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+
+      // ⚠️ CONFIGURAZIONE FIREBASE
+      const firebaseConfig = {
+        apiKey: "IL_TUO_API_KEY",
+        authDomain: "IL_TUO_PROGETTO.firebaseapp.com",
+        databaseURL: "https://IL_TUO_PROGETTO-default-rtdb.firebaseio.com",
+        projectId: "IL_TUO_PROGETTO",
+        storageBucket: "IL_TUO_PROGETTO.appspot.com",
+        appId: "IL_TUO_APP_ID"
+      };
+
+      const app = initializeApp(firebaseConfig);
+      const db = getDatabase(app);
+      const gridSize = 20;
+      const totalPixels = gridSize * gridSize;
+      let currentEditingId = null;
+
+      const canvasDiv = document.getElementById('canvas');
+      const editZone = document.getElementById('editZone');
+      const infoStatus = document.getElementById('infoStatus');
+
+      // 1. Inizializza/Disegna la griglia
+      for (let i = 0; i < totalPixels; i++) {
+        const pixel = document.createElement('div');
+        pixel.classList.add('pixel');
+        pixel.id = `pixel-${i}`;
+        pixel.onclick = () => tryLockPixel(i);
+        canvasDiv.appendChild(pixel);
+      }
+
+      // 2. Funzione per bloccare un pixel (Semaforo)
+      // Usiamo una Transazione per essere sicuri che due persone non clicchino insieme
+      function tryLockPixel(id) {
+        if (currentEditingId !== null) return;
+
+        const pixelRef = ref(db, 'canvas/' + id);
+        
+        runTransaction(pixelRef, (currentData) => {
+          if (currentData && currentData.locked) {
+            return; // Già occupato, annulla transazione
+          }
+          return { ...currentData, locked: true, user: "anonimo" };
+        }).then((result) => {
+          if (result.committed) {
+            startEditing(id);
+          } else {
+            alert("Spiacente, qualcuno è arrivato prima su questo pixel!");
+          }
+        });
+      }
+
+      function startEditing(id) {
+        currentEditingId = id;
+        editZone.style.display = 'block';
+        document.getElementById('currentPixelText').innerText = "Stai modificando il pixel #" + id;
+      }
+
+      // 3. Salvataggio e Sblocco
+      document.getElementById('btnSave').onclick = () => {
+        const url = document.getElementById('imgUrl').value;
+        if (!url) return alert("Inserisci un URL!");
+
+        update(ref(db, 'canvas/' + currentEditingId), {
+          image: url,
+          locked: false
+        });
+        finishEditing();
+      };
+
+      document.getElementById('btnCancel').onclick = () => {
+        update(ref(db, 'canvas/' + currentEditingId), { locked: false });
+        finishEditing();
+      };
+
+      function finishEditing() {
+        currentEditingId = null;
+        editZone.style.display = 'none';
+        document.getElementById('imgUrl').value = "";
+      }
+
+      // 4. Funzione Pixel Casuale
+      document.getElementById('btnRandom').onclick = () => {
+        onValue(ref(db, 'canvas'), (snapshot) => {
+          const data = snapshot.val() || {};
+          let freePixels = [];
+          for(let i=0; i<totalPixels; i++) {
+            if(!data[i] || !data[i].locked) freePixels.push(i);
+          }
+          const randomId = freePixels[Math.floor(Math.random() * freePixels.length)];
+          tryLockPixel(randomId);
+        }, { onlyOnce: true });
+      };
+
+      // 5. Sincronizzazione Live (Aggiorna immagini e semafori)
+      onValue(ref(db, 'canvas'), (snapshot) => {
+        const data = snapshot.val();
+        if (data) {
+          Object.keys(data).forEach(id => {
+            const el = document.getElementById(`pixel-${id}`);
+            if (data[id].image) el.style.backgroundImage = `url(${data[id].image})`;
+            
+            if (data[id].locked) {
+              el.classList.add('locked');
+            } else {
+              el.classList.remove('locked');
+            }
+          });
+        }
+      });
+    </script>
+</body>
+</html>
