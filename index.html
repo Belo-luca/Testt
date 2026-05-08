@@ -2,57 +2,44 @@
 <html lang="it">
 <head>
     <meta charset="UTF-8">
-    <title>Live Image Canvas - Semaphores</title>
+    <title>Collaborative Image Canvas</title>
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #222; color: white; text-align: center; }
-        #canvas { 
-            display: grid; 
+        #canvas {
+            display: grid;
             grid-template-columns: repeat(20, 40px);
-            gap: 2px; 
+            gap: 2px;
             justify-content: center;
             margin-top: 20px;
         }
-        .pixel { 
-            width: 40px; height: 40px; background: #444; 
+        .pixel {
+            width: 40px; height: 40px; background: #444;
             border-radius: 4px; cursor: pointer; position: relative;
             background-size: cover; background-position: center;
         }
+        /* Pixel locked (being edited by someone) */
         .pixel.locked { cursor: not-allowed; border: 2px solid #ff4444; opacity: 0.5; }
-        .pixel.locked::after { content: "🔒"; font-size: 10px; position: absolute; top: 0; right: 0; }
-        
+        .pixel.locked::after { content: ""; font-size: 10px; position: absolute; top: 0; right: 0; }
+
+        /* Pixel already has an image — cannot be overwritten */
+        .pixel.has-image { cursor: not-allowed; }
+
         .controls { margin: 20px; padding: 20px; background: #333; display: inline-block; border-radius: 10px; }
         input[type="text"], button { padding: 10px; border-radius: 5px; border: none; margin: 5px; }
         button { background: #0088ff; color: white; cursor: pointer; font-weight: bold; }
         button:hover { background: #0055aa; }
 
-        /* Upload area */
         .upload-area {
-            border: 2px dashed #555;
-            border-radius: 8px;
-            padding: 12px;
-            margin: 8px 0;
-            cursor: pointer;
-            transition: border-color 0.2s;
+            border: 2px dashed #555; border-radius: 8px; padding: 12px;
+            margin: 8px 0; cursor: pointer; transition: border-color 0.2s;
         }
         .upload-area:hover { border-color: #0088ff; }
         .upload-area.drag-over { border-color: #00cc66; background: rgba(0,200,100,0.1); }
         input[type="file"] { display: none; }
-        
-        /* Preview */
-        #imgPreview {
-            max-width: 100px; max-height: 100px;
-            border-radius: 4px; margin-top: 8px;
-            display: none; object-fit: cover;
-        }
 
-        /* Countdown */
-        #countdown {
-            font-size: 13px;
-            color: #ffaa00;
-            margin-top: 6px;
-        }
+        #imgPreview { max-width: 100px; max-height: 100px; border-radius: 4px; margin-top: 8px; display: none; object-fit: cover; }
+        #countdown { font-size: 13px; color: #ffaa00; margin-top: 6px; }
 
-        /* Tabs */
         .tab-btns { display: flex; gap: 6px; justify-content: center; margin-bottom: 10px; }
         .tab-btn { background: #555; padding: 6px 14px; font-size: 13px; border-radius: 5px; border: none; color: white; cursor: pointer; }
         .tab-btn.active { background: #0088ff; }
@@ -61,30 +48,26 @@
     </style>
 </head>
 <body>
-
     <h1>Collaborative Image Canvas</h1>
-    <p>Clicca un pixel o usa il pulsante per averne uno a caso!</p>
+    <p>Clicca un pixel libero o usa il pulsante per averne uno a caso!</p>
 
     <div class="controls">
         <button id="btnRandom">Assegnami un pixel a caso</button>
         <div id="editZone" style="display:none;">
             <p id="currentPixelText"></p>
 
-            <!-- Tab switcher: URL vs Upload -->
             <div class="tab-btns">
                 <button class="tab-btn active" id="tabUrl">Incolla URL</button>
                 <button class="tab-btn" id="tabUpload">Carica file</button>
             </div>
 
-            <!-- Tab URL -->
             <div class="tab-content active" id="panelUrl">
                 <input type="text" id="imgUrl" placeholder="Incolla URL immagine..." style="width:260px;">
             </div>
 
-            <!-- Tab Upload -->
             <div class="tab-content" id="panelUpload">
                 <div class="upload-area" id="uploadArea">
-                    <p style="margin:0; font-size:14px;">📁 Clicca o trascina un'immagine qui</p>
+                    <p style="margin:0; font-size:14px;">Clicca o trascina un'immagine qui</p>
                     <input type="file" id="fileInput" accept="image/*">
                     <img id="imgPreview" alt="Anteprima">
                 </div>
@@ -120,11 +103,14 @@
       const db = getDatabase(app);
       const gridSize = 20;
       const totalPixels = gridSize * gridSize;
-      const LOCK_TIMEOUT_SEC = 30; // secondi per salvare prima del rilascio automatico
+      const LOCK_TIMEOUT_SEC = 30;
 
       let currentEditingId = null;
       let countdownInterval = null;
-      let uploadedBase64 = null; // immagine caricata da file
+      let uploadedBase64 = null;
+
+      // Local mirror of canvas state to check if a pixel has an image
+      let canvasState = {};
 
       const canvasDiv = document.getElementById('canvas');
       const editZone = document.getElementById('editZone');
@@ -132,7 +118,7 @@
       const countdownEl = document.getElementById('countdown');
       const imgPreview = document.getElementById('imgPreview');
 
-      // ---- Griglia ----
+      // ---- Build grid ----
       for (let i = 0; i < totalPixels; i++) {
         const pixel = document.createElement('div');
         pixel.classList.add('pixel');
@@ -151,16 +137,12 @@
         document.getElementById('panel' + name).classList.add('active');
       }
 
-      // ---- Upload da file ----
+      // ---- File upload ----
       const uploadArea = document.getElementById('uploadArea');
       const fileInput = document.getElementById('fileInput');
 
       uploadArea.onclick = () => fileInput.click();
-
-      uploadArea.addEventListener('dragover', e => {
-        e.preventDefault();
-        uploadArea.classList.add('drag-over');
-      });
+      uploadArea.addEventListener('dragover', e => { e.preventDefault(); uploadArea.classList.add('drag-over'); });
       uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('drag-over'));
       uploadArea.addEventListener('drop', e => {
         e.preventDefault();
@@ -168,28 +150,38 @@
         const file = e.dataTransfer.files[0];
         if (file && file.type.startsWith('image/')) handleFile(file);
       });
-
-      fileInput.onchange = () => {
-        if (fileInput.files[0]) handleFile(fileInput.files[0]);
-      };
+      fileInput.onchange = () => { if (fileInput.files[0]) handleFile(fileInput.files[0]); };
 
       function handleFile(file) {
         const reader = new FileReader();
         reader.onload = (e) => {
-          uploadedBase64 = e.target.result; // data URL base64
+          uploadedBase64 = e.target.result;
           imgPreview.src = uploadedBase64;
           imgPreview.style.display = 'block';
         };
         reader.readAsDataURL(file);
       }
 
-      // ---- Lock pixel con transazione ----
+      // ---- FIX 1: block pixels that already have an image ----
+      function pixelHasImage(id) {
+        const d = canvasState[id];
+        return d && d.image != null;
+      }
+
+      // ---- Lock pixel with transaction ----
       function tryLockPixel(id) {
         if (currentEditingId !== null) return;
 
+        // FIX 1: if the pixel already has an image, block editing
+        if (pixelHasImage(id)) {
+          infoStatus.textContent = "⚠️ Questo pixel ha già un'immagine e non può essere modificato.";
+          setTimeout(() => infoStatus.textContent = '', 3000);
+          return;
+        }
+
         const pixelRef = ref(db, 'canvas/' + id);
         runTransaction(pixelRef, (currentData) => {
-          if (currentData && currentData.locked) return; // già occupato
+          if (currentData && currentData.locked) return; // already taken
           return { ...currentData, locked: true, lockedAt: Date.now() };
         }).then((result) => {
           if (result.committed) {
@@ -202,14 +194,18 @@
 
       function startEditing(id) {
         currentEditingId = id;
+
+        // FIX 2: reset both image sources to null when a pixel is assigned
         uploadedBase64 = null;
         imgPreview.src = '';
         imgPreview.style.display = 'none';
         document.getElementById('imgUrl').value = '';
+        // Also reset the tab to URL (default)
+        switchTab('Url');
+
         editZone.style.display = 'block';
         document.getElementById('currentPixelText').innerText = "Stai modificando il pixel #" + id;
 
-        // Countdown: se non salva entro LOCK_TIMEOUT_SEC secondi, rilascia automaticamente
         let remaining = LOCK_TIMEOUT_SEC;
         countdownEl.textContent = `⏳ Tempo rimasto: ${remaining}s — poi il pixel verrà rilasciato automaticamente.`;
         countdownInterval = setInterval(() => {
@@ -230,9 +226,8 @@
         finishEditing();
       }
 
-      // ---- Salva ----
+      // ---- Save ----
       document.getElementById('btnSave').onclick = () => {
-        // Determina sorgente immagine: base64 dal file O URL di testo
         const activeTab = document.getElementById('panelUpload').classList.contains('active') ? 'upload' : 'url';
         let imageData = null;
 
@@ -253,7 +248,7 @@
         finishEditing();
       };
 
-      // ---- Annulla ----
+      // ---- Cancel ----
       document.getElementById('btnCancel').onclick = () => {
         clearInterval(countdownInterval);
         update(ref(db, 'canvas/' + currentEditingId), { locked: false });
@@ -270,13 +265,15 @@
         countdownEl.textContent = '';
       }
 
-      // ---- Pixel casuale ----
+      // ---- Random pixel ----
       document.getElementById('btnRandom').onclick = () => {
         onValue(ref(db, 'canvas'), (snapshot) => {
           const data = snapshot.val() || {};
           let freePixels = [];
           for (let i = 0; i < totalPixels; i++) {
-            if (!data[i] || !data[i].locked) freePixels.push(i);
+            // FIX 1: exclude pixels that already have an image
+            const d = data[i];
+            if (!d || (!d.locked && !d.image)) freePixels.push(i);
           }
           if (freePixels.length === 0) return alert("Tutti i pixel sono occupati!");
           const randomId = freePixels[Math.floor(Math.random() * freePixels.length)];
@@ -284,21 +281,60 @@
         }, { onlyOnce: true });
       };
 
-      // ---- Sincronizzazione live ----
+      // ---- Live sync ----
       onValue(ref(db, 'canvas'), (snapshot) => {
         const data = snapshot.val();
         if (!data) return;
+        // Update local mirror
+        canvasState = data;
+
         Object.keys(data).forEach(id => {
           const el = document.getElementById(`pixel-${id}`);
           if (!el) return;
-          if (data[id].image) el.style.backgroundImage = `url(${data[id].image})`;
-          if (data[id].locked) {
+
+          if (data[id].image) {
+            el.style.backgroundImage = `url(${data[id].image})`;
+            el.classList.add('has-image');
+            el.classList.remove('locked');
+          } else if (data[id].locked) {
             el.classList.add('locked');
+            el.classList.remove('has-image');
           } else {
             el.classList.remove('locked');
+            el.classList.remove('has-image');
           }
         });
       });
+
+      // ---- FIX 3: Every 60s, unlock pixels where image is null ----
+      function cleanupNullPixels() {
+        onValue(ref(db, 'canvas'), (snapshot) => {
+          const data = snapshot.val();
+          if (!data) return;
+
+          const updates = {};
+          Object.keys(data).forEach(id => {
+            const d = data[id];
+            // If image is missing/null AND it's still locked, release it
+            if (d && !d.image && d.locked) {
+              updates['canvas/' + id + '/locked'] = false;
+            }
+          });
+
+          if (Object.keys(updates).length > 0) {
+            // Use update at root level for multiple paths at once
+            import("https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js").then(({ update: dbUpdate, ref: dbRef }) => {
+              dbUpdate(dbRef(db), updates);
+            });
+          }
+        }, { onlyOnce: true });
+      }
+
+      // Run cleanup every 60 seconds
+      setInterval(cleanupNullPixels, 60 * 1000);
+      // Also run once at startup
+      cleanupNullPixels();
+
     </script>
 </body>
 </html>
