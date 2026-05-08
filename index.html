@@ -174,7 +174,7 @@
 
         // FIX 1: if the pixel already has an image, block editing
         if (pixelHasImage(id)) {
-          infoStatus.textContent = "⚠️ Questo pixel ha già un'immagine e non può essere modificato.";
+          infoStatus.textContent = "Questo pixel ha già un'immagine e non può essere modificato.";
           setTimeout(() => infoStatus.textContent = '', 3000);
           return;
         }
@@ -207,15 +207,15 @@
         document.getElementById('currentPixelText').innerText = "Stai modificando il pixel #" + id;
 
         let remaining = LOCK_TIMEOUT_SEC;
-        countdownEl.textContent = `⏳ Tempo rimasto: ${remaining}s — poi il pixel verrà rilasciato automaticamente.`;
+        countdownEl.textContent = `Tempo rimasto: ${remaining}s — poi il pixel verrà rilasciato automaticamente.`;
         countdownInterval = setInterval(() => {
           remaining--;
           if (remaining <= 0) {
             clearInterval(countdownInterval);
-            countdownEl.textContent = '⌛ Tempo scaduto! Pixel rilasciato.';
+            countdownEl.textContent = 'Tempo scaduto! Pixel rilasciato.';
             autoRelease();
           } else {
-            countdownEl.textContent = `⏳ Tempo rimasto: ${remaining}s — poi il pixel verrà rilasciato automaticamente.`;
+            countdownEl.textContent = `Tempo rimasto: ${remaining}s — poi il pixel verrà rilasciato automaticamente.`;
           }
         }, 1000);
       }
